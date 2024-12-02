@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectWriter;
 import com.ll.domain.member.member.service.MemberService;
 import com.ll.spring.annotation.Bean;
 import com.ll.spring.annotation.Configuration;
+
 import lombok.RequiredArgsConstructor;
 
 @Configuration
@@ -18,7 +19,8 @@ public class JacksonConfig {
         return objectMapper;
     }
 
-    @Bean ObjectWriter objectWriter(ObjectMapper objectMapper) {
-        return objectMapper().writerWithDefaultPrettyPrinter();
+    @Bean
+    public ObjectWriter objectWriter(ObjectMapper objectMapper) {
+        return objectMapper.writerWithDefaultPrettyPrinter();
     }
 }

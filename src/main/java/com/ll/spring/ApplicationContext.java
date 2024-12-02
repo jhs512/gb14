@@ -58,11 +58,26 @@ public class ApplicationContext {
     private void createBeanFromMethod(Method method, Object configInstance) {
         try {
             String beanName = method.getName();
-            Object beanInstance = method.invoke(configInstance);
+            
+            // 메서드 파라미터의 의존성 해결
+            Object[] params = resolveDependencies(method);
+            
+            Object beanInstance = method.invoke(configInstance, params);
             registerBean(beanName, beanInstance);
         } catch (Exception e) {
             throw new RuntimeException("Failed to create bean from method: " + method.getName(), e);
         }
+    }
+
+    private Object[] resolveDependencies(Method method) {
+        Parameter[] parameters = method.getParameters();
+        Object[] params = new Object[parameters.length];
+
+        for (int i = 0; i < parameters.length; i++) {
+            params[i] = resolveDependency(parameters[i], method.getDeclaringClass());
+        }
+
+        return params;
     }
 
     private void createComponentBeans() {
