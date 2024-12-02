@@ -18,4 +18,12 @@ public class AppTest {
 
         ApiV1PostController apiV1PostController = applicationContext.getBean("apiV1PostController");
     }
+
+    @Test
+    @DisplayName("postService")
+    public void t3() {
+        ApplicationContext applicationContext = new ApplicationContext("com.ll");
+
+        PostService postService = applicationContext.getBean("postService");
+    }
 }
