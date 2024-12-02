@@ -27,4 +27,12 @@ public class AppTest {
 
         PostService postService = applicationContext.getBean("postService");
     }
+
+    @Test
+    @DisplayName("objectMapper")
+    public void t4() {
+        ApplicationContext applicationContext = new ApplicationContext("com.ll");
+
+        PostService postService = applicationContext.getBean("postService");
+    }
 }
