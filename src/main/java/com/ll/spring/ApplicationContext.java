@@ -1,110 +1,160 @@
 package com.ll.spring;
 
-import com.ll.spring.annotation.Component;
-import org.reflections.Reflections;
-import org.reflections.scanners.Scanners;
-
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.reflections.Reflections;
+import org.reflections.scanners.Scanners;
+
+import com.ll.spring.annotation.Bean;
+import com.ll.spring.annotation.Component;
+import com.ll.spring.annotation.Configuration;
+
 public class ApplicationContext {
     private final Map<String, Object> beans = new HashMap<>();
     private final String basePackage;
+    private final Reflections reflections;
 
     public ApplicationContext(String basePackage) {
         this.basePackage = basePackage;
+        this.reflections = new Reflections(basePackage, Scanners.TypesAnnotated);
         initialize();
     }
 
     private void initialize() {
-        Set<Class<?>> candidates = scanComponents();
-        createBeanDefinitions(candidates);
-        registerBeans(candidates);
+        createConfigurationBeans();
+        createComponentBeans();
     }
 
-    private Set<Class<?>> scanComponents() {
-        Reflections reflections = new Reflections(basePackage, Scanners.TypesAnnotated);
-        return reflections.getTypesAnnotatedWith(Component.class).stream()
-                .filter(cls -> !cls.isAnnotation() && !cls.isInterface())
+    private void createConfigurationBeans() {
+        Set<Class<?>> configurations = findConfigurationClasses();
+        configurations.forEach(this::processConfigurationClass);
+    }
+
+    private Set<Class<?>> findConfigurationClasses() {
+        return reflections.getTypesAnnotatedWith(Configuration.class).stream()
+                .filter(this::isInstantiableClass)
                 .collect(Collectors.toSet());
     }
 
-    private void createBeanDefinitions(Set<Class<?>> candidates) {
-        for (Class<?> candidate : candidates) {
-            String beanName = generateBeanName(candidate);
-            registerBean(beanName, null); // 먼저 빈 이름만 등록
+    private void processConfigurationClass(Class<?> configClass) {
+        Object configInstance = createBean(configClass);
+        processBeanMethods(configClass, configInstance);
+    }
+
+    private void processBeanMethods(Class<?> configClass, Object configInstance) {
+        for (Method method : configClass.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(Bean.class)) {
+                createBeanFromMethod(method, configInstance);
+            }
         }
     }
 
-    private void registerBeans(Set<Class<?>> candidates) {
-        for (Class<?> candidate : candidates) {
-            createBean(candidate);
+    private void createBeanFromMethod(Method method, Object configInstance) {
+        try {
+            String beanName = method.getName();
+            Object beanInstance = method.invoke(configInstance);
+            registerBean(beanName, beanInstance);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create bean from method: " + method.getName(), e);
         }
+    }
+
+    private void createComponentBeans() {
+        Set<Class<?>> components = findComponentClasses();
+        components.forEach(this::createBean);
+    }
+
+    private Set<Class<?>> findComponentClasses() {
+        return reflections.getTypesAnnotatedWith(Component.class).stream()
+                .filter(this::isInstantiableClass)
+                .filter(cls -> !cls.isAnnotationPresent(Configuration.class))
+                .collect(Collectors.toSet());
     }
 
     private Object createBean(Class<?> cls) {
         String beanName = generateBeanName(cls);
 
-        // 이미 생성된 빈이 있다면 반환
-        Object existingBean = beans.get(beanName);
-        if (existingBean != null) {
-            return existingBean;
+        if (isExistingBean(beanName)) {
+            return beans.get(beanName);
         }
 
-        // 생성 진행 중임을 표시 (순환 참조 감지용)
-        beans.put(beanName, null);
+        markBeanAsInProgress(beanName);
 
         try {
-            Constructor<?> constructor = cls.getDeclaredConstructors()[0];
-            Object[] params = new Object[constructor.getParameterCount()];
-
-            // 생성자 파라미터의 의존성을 먼저 해결
-            for (int i = 0; i < constructor.getParameterCount(); i++) {
-                Parameter parameter = constructor.getParameters()[i];
-                Class<?> parameterType = parameter.getType();
-
-                // 의존성 빈을 찾거나 생성
-                Object dependency = findBeanByType(parameterType);
-                if (dependency == null) {
-                    // 의존성 빈이 없다면 해당 타입의 빈을 찾아서 생성
-                    dependency = createBeanOfType(parameterType);
-                }
-
-                if (dependency == null) {
-                    throw new RuntimeException(
-                            String.format("No bean found for parameter type: %s in class: %s",
-                                    parameterType.getName(),
-                                    cls.getName()
-                            )
-                    );
-                }
-
-                params[i] = dependency;
-            }
-
-            // 모든 의존성이 해결되면 인스턴스 생성
-            Object instance = constructor.newInstance(params);
-            beans.put(beanName, instance);
+            Object instance = instantiateBean(cls);
+            registerBean(beanName, instance);
             return instance;
-
         } catch (Exception e) {
-            beans.remove(beanName); // 실패시 생성 진행 중 표시 제거
+            removeBeanInProgress(beanName);
             throw new RuntimeException("Failed to create bean: " + cls.getName(), e);
         }
     }
 
-    private Object createBeanOfType(Class<?> type) {
-        // 해당 타입의 구현체를 찾아서 생성
-        for (Class<?> candidate : scanComponents()) {
-            if (type.isAssignableFrom(candidate)) {
-                return createBean(candidate);
-            }
+    private boolean isExistingBean(String beanName) {
+        return beans.get(beanName) != null;
+    }
+
+    private void markBeanAsInProgress(String beanName) {
+        beans.put(beanName, null);
+    }
+
+    private void removeBeanInProgress(String beanName) {
+        beans.remove(beanName);
+    }
+
+    private Object instantiateBean(Class<?> cls) throws Exception {
+        Constructor<?> constructor = cls.getDeclaredConstructors()[0];
+        Object[] params = resolveDependencies(constructor);
+        return constructor.newInstance(params);
+    }
+
+    private Object[] resolveDependencies(Constructor<?> constructor) {
+        Parameter[] parameters = constructor.getParameters();
+        Object[] params = new Object[parameters.length];
+
+        for (int i = 0; i < parameters.length; i++) {
+            params[i] = resolveDependency(parameters[i], constructor.getDeclaringClass());
         }
-        return null;
+
+        return params;
+    }
+
+    private Object resolveDependency(Parameter parameter, Class<?> dependentClass) {
+        Class<?> parameterType = parameter.getType();
+        Object dependency = findBeanByType(parameterType);
+
+        if (dependency == null) {
+            dependency = createBeanOfType(parameterType);
+        }
+
+        if (dependency == null) {
+            throw new RuntimeException(
+                    String.format("No bean found for parameter type: %s in class: %s",
+                            parameterType.getName(),
+                            dependentClass.getName()
+                    )
+            );
+        }
+
+        return dependency;
+    }
+
+    private Object createBeanOfType(Class<?> type) {
+        return findComponentClasses().stream()
+                .filter(type::isAssignableFrom)
+                .findFirst()
+                .map(this::createBean)
+                .orElse(null);
+    }
+
+    private boolean isInstantiableClass(Class<?> cls) {
+        return !cls.isAnnotation() && !cls.isInterface();
     }
 
     private String generateBeanName(Class<?> cls) {
@@ -113,12 +163,10 @@ public class ApplicationContext {
     }
 
     private Object findBeanByType(Class<?> type) {
-        for (Object bean : beans.values()) {
-            if (bean != null && type.isAssignableFrom(bean.getClass())) {
-                return bean;
-            }
-        }
-        return null;
+        return beans.values().stream()
+                .filter(bean -> bean != null && type.isAssignableFrom(bean.getClass()))
+                .findFirst()
+                .orElse(null);
     }
 
     private void registerBean(String beanName, Object instance) {
