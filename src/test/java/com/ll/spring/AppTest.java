@@ -1,6 +1,7 @@
 package com.ll.spring;
 
 import com.ll.domain.post.post.controller.ApiV1PostController.ApiV1PostController;
+import com.ll.domain.post.post.service.PostService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
